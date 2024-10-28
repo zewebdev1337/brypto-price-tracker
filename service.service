@@ -1,0 +1,13 @@
+[Unit]
+Description=Brypto price tracker service. It starts after successfully connecting to the internet
+After=network.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/brypto-price-tracker
+WorkingDirectory=/usr/local/bin/
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target
