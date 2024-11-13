@@ -11,7 +11,7 @@ int main(int argc, char *argv[]) {
 
     QScreen* screen = QApplication::primaryScreen();
     QRect screenGeometry = screen->geometry();
-    widget->move(screenGeometry.width() - widget->width() - 96, 96);
-    
+    widget->move(screenGeometry.width() - widget->width() - 256, 128);
+
     return app.exec();
 }

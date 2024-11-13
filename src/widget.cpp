@@ -23,6 +23,22 @@ PriceWidget::PriceWidget(const std::vector<QString>& symbols, QWidget* parent)
     setAttribute(Qt::WA_TranslucentBackground);
     // Set window type to dock
     setAttribute(Qt::WA_X11NetWmWindowTypeDock, true);
+    setAttribute(Qt::WA_Hover);
+    setFocusPolicy(Qt::StrongFocus);
+
+    fadeTimer.setSingleShot(false);
+    fadeTimer.setInterval(16);
+    connect(&fadeTimer, &QTimer::timeout, this, [this]() {
+        float step = 0.05;
+        if (std::abs(currentOpacity - targetOpacity) < step) {
+            currentOpacity = targetOpacity;
+            fadeTimer.stop();
+        } else {
+            currentOpacity += (targetOpacity > currentOpacity) ? step : -step;
+        }
+        opacityEffect->setOpacity(currentOpacity);
+        update();
+    });
     
     // Connect the finished signal of the network manager to the handleNetworkReply slot
     // This ensures that the handleNetworkReply function is called when a network request is finished
@@ -32,18 +48,55 @@ PriceWidget::PriceWidget(const std::vector<QString>& symbols, QWidget* parent)
     initUI();
 }
 
+void PriceWidget::enterEvent(QEvent *event) {
+    updateOpacity(HOVER_OPACITY);
+    QWidget::enterEvent(event);
+}
+
+void PriceWidget::leaveEvent(QEvent *event) {
+    updateOpacity(INACTIVE_OPACITY);
+    QWidget::leaveEvent(event);
+}
+
+void PriceWidget::focusInEvent(QFocusEvent *event) {
+    updateOpacity(ACTIVE_OPACITY);
+    QWidget::focusInEvent(event);
+}
+
+void PriceWidget::focusOutEvent(QFocusEvent *event) {
+    updateOpacity(INACTIVE_OPACITY);
+    QWidget::focusOutEvent(event);
+}
+
+void PriceWidget::updateOpacity(float target) {
+    targetOpacity = target;
+    if (!fadeTimer.isActive()) {
+        fadeTimer.start();
+    }
+}
+
 void PriceWidget::initUI() {
-    layout = new QVBoxLayout(this);
+    setAttribute(Qt::WA_TranslucentBackground);
+    contentWidget = new QWidget(this);
+    opacityEffect = new QGraphicsOpacityEffect(this);
+    opacityEffect->setOpacity(1.0);
+    contentWidget->setGraphicsEffect(opacityEffect);
+
+    layout = new QVBoxLayout(contentWidget);
     layout->setSpacing(2);
     layout->setContentsMargins(10, 10, 10, 10);
 
     for (const auto& symbol : symbols) {
         auto* label = new QLabel("Loading...", this);
-        label->setStyleSheet("color: rgb(0, 255, 0)");
+        label->setStyleSheet("color: rgb(255, 255, 255)");
         label->setFont(QFont("Monospace", 12));
         layout->addWidget(label);
         priceLabels[symbol] = label;
     }
+
+    auto mainLayout = new QVBoxLayout(this);
+    mainLayout->addWidget(contentWidget);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
 
     updateTimer = new QTimer(this);
     // Connect the timer's timeout signal to the updatePrices slot
@@ -107,6 +160,18 @@ void PriceWidget::updateLabel(const QString& symbol, const QString& price) {
     }
 }
 
+void PriceWidget::paintEvent(QPaintEvent* event) {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    
+    QColor backgroundColor(16, 16, 16, static_cast<int>((currentOpacity * 0.5) * 255));
+    painter.setBrush(backgroundColor);
+    painter.setPen(Qt::NoPen);
+    painter.drawRoundedRect(rect(), 10, 10);
+    opacityEffect->setOpacity(currentOpacity);
+    QWidget::paintEvent(event);
+}
+
 void PriceWidget::mousePressEvent(QMouseEvent* event) {
     // If the left mouse button is pressed
     if (event->button() == Qt::LeftButton) {
@@ -128,64 +193,37 @@ void PriceWidget::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void PriceWidget::contextMenuEvent(QContextMenuEvent*) {
-    // Toggle between green and purple
-    static bool isGreen = true;
-    QString newColor = isGreen ? "rgb(255, 0, 255)" : "rgb(0, 255, 0)";
-    
+    static int colorIndex = 0;
+    const QStringList colors = {"rgb(255, 255, 255)", "rgb(0, 255, 0)", "rgb(255, 0, 255)"};
+    colorIndex = (colorIndex + 1) % colors.size();
+    QString newColor = colors[colorIndex];
     for (auto* label : priceLabels) {
         label->setStyleSheet(QString("color: %1").arg(newColor));
     }
-    
-    isGreen = !isGreen;
 }
 
 std::vector<QString> PriceWidget::loadSymbolsFromConfig() {
-    QString homePath = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    QString configPath = homePath + "/.pricetrack.json";
-    QFile configFile(configPath);
-
-    if (!configFile.exists()) {
-        qDebug() << "Config file not found, creating with default symbols:" << defaultSymbols;
-        createDefaultConfig(configPath);
-        return defaultSymbols;
-    }
-
-    if (!configFile.open(QIODevice::ReadOnly)) {
-        qDebug() << "Error opening config file:" << configFile.errorString();
-        return defaultSymbols;
-    }
-
-    QJsonDocument doc = QJsonDocument::fromJson(configFile.readAll());
-    configFile.close();
-
-    if (!doc.isArray()) {
-        qDebug() << "Invalid config format, using defaults";
-        return defaultSymbols;
-    }
-
+    QSettings settings("zewebdev1337", "brypto-price-tracker");
+    QStringList symbolList = settings.value("symbols").toStringList();
     std::vector<QString> loadedSymbols;
-    QJsonArray array = doc.array();
-    for (const auto& value : array) {
-        if (value.isString()) {
-            loadedSymbols.push_back(value.toString());
+
+    if (symbolList.isEmpty()) {
+        qDebug() << "No symbols found in settings, using defaults:" << defaultSymbols;
+        saveSymbolsToConfig(defaultSymbols); // Save defaults if none are found
+        return defaultSymbols;
+    }
+
+    for (const QString& symbol : symbolList) {
+        loadedSymbols.push_back(symbol);
         }
-    }
-
-    return loadedSymbols.empty() ? defaultSymbols : loadedSymbols;
+    return loadedSymbols;
 }
 
-void PriceWidget::createDefaultConfig(const QString& path) {
-    QJsonArray array;
-    for (const auto& symbol : defaultSymbols) {
-        array.append(symbol);
+void PriceWidget::saveSymbolsToConfig(const std::vector<QString>& symbolsToSave) {
+    QSettings settings("zewebdev1337", "brypto-price-tracker");
+    QStringList symbolList;
+    for (const QString& symbol : symbolsToSave) {
+        symbolList.append(symbol);
     }
-
-    QJsonDocument doc(array);
-    QFile configFile(path);
-    if (configFile.open(QIODevice::WriteOnly)) {
-        configFile.write(doc.toJson());
-        configFile.close();
-    } else {
-        qDebug() << "Failed to create config file:" << configFile.errorString();
+    settings.setValue("symbols", symbolList);
     }
-}

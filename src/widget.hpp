@@ -10,7 +10,10 @@
 #include <memory>
 #include <vector>
 #include <shared_mutex>
-
+#include <QGraphicsOpacityEffect>
+#include <QSettings>
+#include <QTimer>
+#include <QPainter>
 
 class PriceWidget : public QWidget {
     Q_OBJECT
@@ -23,21 +26,29 @@ public:
     static const std::vector<QString> defaultSymbols;
 
 protected:
+    void enterEvent(QEvent *event) override;
+    void leaveEvent(QEvent *event) override;
+    void focusInEvent(QFocusEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
-
+    void paintEvent(QPaintEvent* event) override; 
 private slots:
     void updatePrices();
     void handleNetworkReply(QNetworkReply* reply);
 
 private:
+    static constexpr float HOVER_OPACITY = 0.85;
+    static constexpr float ACTIVE_OPACITY = 1.0;
+    static constexpr float INACTIVE_OPACITY = 0.75;
+    float currentOpacity{INACTIVE_OPACITY};
+    float targetOpacity{INACTIVE_OPACITY};
+    QTimer fadeTimer;
     void initUI();
     void updateLabel(const QString& symbol, const QString& price);
-    void loadConfig();
-    void saveConfig() const;
-
-    static void createDefaultConfig(const QString& path);
+    static void saveSymbolsToConfig(const std::vector<QString>& symbolsToSave);
+    void updateOpacity(float target);
 
     const QString apiUrl{"https://api.binance.com/api/v3/ticker/price?symbol="};
     QMap<QString, QLabel*> priceLabels;
@@ -51,4 +62,6 @@ private:
     // Thread-safe price cache
     mutable std::shared_mutex priceMutex;
     QMap<QString, QString> priceCache;
+    QWidget* contentWidget{nullptr};
+    QGraphicsOpacityEffect* opacityEffect{nullptr};
 };
